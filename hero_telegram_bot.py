@@ -36,12 +36,8 @@ def get_countries_for_service(service_code):
     """
     Récupère les pays disponibles pour un service
     
-    Format de réponse RÉEL de l'API (différent de la doc):
-    {
-      "0": {"country": 48, "price": 0.25, "count": 12449},
-      "1": {"country": 34, "price": 0.28, "count": 1902},
-      ...
-    }
+    L'API retourne un dictionnaire avec des clés numériques string:
+    {"0": {...}, "1": {...}, ...}
     """
     params = {
         "action": "getTopCountriesByService",
@@ -51,57 +47,48 @@ def get_countries_for_service(service_code):
     
     try:
         response = requests.get(BASE_URL, params=params, timeout=10)
-        print(f"\n=== DEBUG getTopCountriesByService ===")
+        print(f"\n=== API Call: getTopCountriesByService ===")
         print(f"Service: {service_code}")
-        print(f"Status HTTP: {response.status_code}")
+        print(f"HTTP Status: {response.status_code}")
         
         data = response.json()
-        print(f"Type de data: {type(data)}")
         
-        # CAS 1: Dictionnaire avec clés numériques (format réel de l'API)
+        # L'API retourne un DICTIONNAIRE avec clés numériques
         if isinstance(data, dict):
-            # Vérifier si ce sont des clés numériques
-            keys = list(data.keys())
-            if len(keys) > 0 and (keys[0].isdigit() if isinstance(keys[0], str) else isinstance(keys[0], int)):
-                # Convertir le dict en liste
-                countries_list = []
-                for key in sorted(data.keys(), key=lambda x: int(x) if isinstance(x, str) else x):
-                    country_data = data[key]
-                    if isinstance(country_data, dict) and "country" in country_data:
-                        countries_list.append(country_data)
-                
-                print(f"✅ Format détecté: Dict avec clés numériques ({len(countries_list)} pays)")
+            # Convertir en liste
+            countries_list = []
+            
+            # Parcourir toutes les clés (peu importe leur type)
+            for key in data.keys():
+                value = data[key]
+                # Vérifier que c'est bien un objet pays
+                if isinstance(value, dict) and "country" in value:
+                    countries_list.append(value)
+            
+            if countries_list:
+                print(f"✅ Trouvé {len(countries_list)} pays")
                 return countries_list
-            
-            # Peut-être que c'est un dict avec le service comme clé
-            if service_code in data and isinstance(data[service_code], list):
-                print(f"✅ Format détecté: Service comme clé")
-                return data[service_code]
+            else:
+                print(f"⚠️ Dictionnaire reçu mais pas de données pays valides")
+                return []
         
-        # CAS 2: Array direct (selon la doc, mais pas observé en pratique)
+        # Si c'est une liste (format alternatif)
         elif isinstance(data, list):
+            print(f"✅ Format liste reçu avec {len(data)} éléments")
+            # Vérifier si c'est directement des objets pays
             if len(data) > 0 and isinstance(data[0], dict) and "country" in data[0]:
-                print(f"✅ Format détecté: Array direct de pays ({len(data)} pays)")
                 return data
-            
-            # Format alternatif: [{ "service_code": [...] }]
+            # Sinon peut-être que c'est [{ "service": [...] }]
             elif len(data) > 0 and isinstance(data[0], dict):
-                first_item = data[0]
-                if service_code in first_item and isinstance(first_item[service_code], list):
-                    print(f"✅ Format détecté: Service dans array")
-                    return first_item[service_code]
-                
-                # Première liste trouvée
-                for key, value in first_item.items():
+                for key, value in data[0].items():
                     if isinstance(value, list):
-                        print(f"✅ Format détecté: Première clé '{key}'")
                         return value
         
-        print(f"❌ Format non reconnu")
+        print(f"❌ Format non reconnu: {type(data)}")
         return []
         
     except Exception as e:
-        print(f"❌ ERREUR dans get_countries_for_service: {e}")
+        print(f"❌ ERREUR: {e}")
         import traceback
         traceback.print_exc()
         return []
@@ -112,7 +99,7 @@ def get_countries():
     response = requests.get(BASE_URL, params=params, timeout=10)
     return response.json()
 
-def request_number(service, country, operator=None, max_price=None):
+def request_number(service, country):
     """Commander un numéro"""
     params = {
         "action": "getNumber",
@@ -120,12 +107,6 @@ def request_number(service, country, operator=None, max_price=None):
         "country": country,
         "api_key": API_KEY
     }
-    
-    if operator:
-        params["operator"] = operator
-    if max_price:
-        params["maxPrice"] = max_price
-    
     response = requests.get(BASE_URL, params=params, timeout=10)
     return response.text
 
@@ -161,6 +142,54 @@ def confirm_sms(activation_id):
     response = requests.get(BASE_URL, params=params, timeout=10)
     return response.text
 
+def get_active_activations():
+    """Récupérer les activations actives"""
+    params = {
+        "action": "getActiveActivations",
+        "api_key": API_KEY
+    }
+    try:
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        data = response.json()
+        
+        # Vérifier que c'est bien un dict avec le bon format
+        if isinstance(data, dict) and data.get("status") == "success":
+            activations = data.get("activeActivations", [])
+            # S'assurer que c'est une liste
+            if isinstance(activations, list):
+                return activations
+        
+        # Si le format n'est pas bon, retourner liste vide
+        return []
+    except Exception as e:
+        print(f"Erreur get_active_activations: {e}")
+        return []
+
+def get_history(limit=10):
+    """Récupérer l'historique des activations"""
+    import time
+    params = {
+        "action": "getHistory",
+        "start": int(time.time()) - (7 * 24 * 3600),  # 7 derniers jours
+        "end": int(time.time()),
+        "offset": 0,
+        "size": limit,
+        "api_key": API_KEY
+    }
+    try:
+        response = requests.get(BASE_URL, params=params, timeout=10)
+        data = response.json()
+        
+        # L'API retourne directement une liste
+        if isinstance(data, list):
+            return data
+        
+        # Retourner liste vide si format incorrect
+        return []
+    except Exception as e:
+        print(f"Erreur get_history: {e}")
+        return []
+
 # ===== Commandes Telegram =====
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -183,17 +212,13 @@ async def search_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Recherche de service par mot-clé"""
     query_text = update.message.text.lower()
     
-    # Récupérer tous les services
     all_services = get_all_services(lang="en")
     
     if not all_services:
-        await update.message.reply_text(
-            "❌ Impossible de récupérer la liste des services.\n"
-            "Réessaye plus tard."
-        )
+        await update.message.reply_text("❌ Impossible de récupérer la liste des services.")
         return
     
-    # Filtrer selon la recherche
+    # Filtrer
     matching_services = [
         s for s in all_services 
         if query_text in s["name"].lower() or query_text in s["code"].lower()
@@ -202,17 +227,12 @@ async def search_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not matching_services:
         await update.message.reply_text(
             f"❌ Aucun service trouvé pour `{query_text}`\n\n"
-            "💡 Exemples de recherche :\n"
-            "• telegram\n"
-            "• cryptonow\n"
-            "• whatsapp\n"
-            "• google\n"
-            "• instagram",
+            "💡 Exemples : telegram, crypto, whatsapp, google",
             parse_mode="Markdown"
         )
         return
     
-    # Limiter à 20 résultats
+    # Limiter à 20
     matching_services = matching_services[:20]
     
     keyboard = [
@@ -227,8 +247,7 @@ async def search_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
     
     await update.message.reply_text(
-        f"🔍 *{len(matching_services)} service(s) trouvé(s)*\n\n"
-        "Choisis celui que tu veux :",
+        f"🔍 *{len(matching_services)} service(s)*\n\nChoisis :",
         reply_markup=reply_markup,
         parse_mode="Markdown"
     )
@@ -244,22 +263,20 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         keyboard = [[InlineKeyboardButton("🔙 Menu", callback_data="back_menu")]]
         reply_markup = InlineKeyboardMarkup(keyboard)
         await query.edit_message_text(
-            f"💰 *Ton solde :* {balance} USD",
+            f"💰 *Solde :* {balance} USD",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
     
-    # ===== COMMANDER UN NUMERO =====
+    # ===== COMMANDER =====
     elif query.data == "order":
         await query.edit_message_text(
             "🔍 *Recherche de service*\n\n"
-            "Tape le nom du service que tu veux :\n\n"
-            "💡 Exemples :\n"
-            "• `telegram`\n"
-            "• `cryptonow`\n"
-            "• `whatsapp`\n"
-            "• `google`\n"
-            "• `instagram`",
+            "Tape le nom du service :\n"
+            "• telegram\n"
+            "• crypto\n"
+            "• whatsapp\n"
+            "• google",
             parse_mode="Markdown"
         )
     
@@ -277,35 +294,167 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     
+    # ===== MES ACTIVATIONS =====
+    elif query.data == "activations":
+        # Récupérer les activations actives
+        active = get_active_activations()
+        
+        # Vérifier que c'est bien une liste
+        if not isinstance(active, list):
+            print(f"ERREUR: active n'est pas une liste, c'est un {type(active)}")
+            active = []
+        
+        if active:
+            message = "📋 *Activations en cours*\n\n"
+            keyboard = []
+            
+            for act in active[:5]:  # Limiter à 5
+                phone = act.get("phoneNumber", "N/A")
+                service = act.get("serviceCode", "N/A")
+                status = act.get("activationStatus", "0")
+                act_id = act.get("activationId", "")
+                
+                status_text = {
+                    "0": "⏳ En attente",
+                    "1": "📨 SMS envoyé",
+                    "3": "🔄 Redemandé",
+                    "4": "✅ Code reçu",
+                    "6": "✅ Complété",
+                    "8": "❌ Annulé"
+                }.get(status, f"Status {status}")
+                
+                message += f"• {service.upper()} - {phone}\n  {status_text}\n\n"
+                
+                # Ajouter un bouton pour vérifier
+                if status in ["0", "1", "3"]:
+                    keyboard.append([
+                        InlineKeyboardButton(
+                            f"🔄 Vérifier {service} ({phone[-4:]})",
+                            callback_data=f"check_{act_id}"
+                        )
+                    ])
+            
+            keyboard.append([InlineKeyboardButton("📜 Voir historique", callback_data="history")])
+            keyboard.append([InlineKeyboardButton("🔙 Menu", callback_data="back_menu")])
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                message,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        else:
+            # Pas d'activations actives, afficher l'historique
+            history = get_history(5)
+            
+            if history:
+                message = "📜 *Historique (5 dernières)*\n\n"
+                for h in history:
+                    phone = h.get("phone", "N/A")
+                    sms = h.get("sms") or "Pas de SMS"  # Gérer None
+                    cost = h.get("cost", 0)
+                    status = h.get("status", "0")
+                    
+                    status_text = {
+                        "4": "✅ Complété",
+                        "6": "✅ Complété",
+                        "8": "❌ Annulé"
+                    }.get(status, f"Status {status}")
+                    
+                    # Tronquer le SMS de manière sécurisée
+                    if sms and len(sms) > 30:
+                        sms_short = sms[:30] + "..."
+                    else:
+                        sms_short = sms
+                    
+                    message += f"• {phone}\n  {status_text} - ${cost}\n  {sms_short}\n\n"
+                
+                keyboard = [[InlineKeyboardButton("🔙 Menu", callback_data="back_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                
+                await query.edit_message_text(
+                    message,
+                    reply_markup=reply_markup,
+                    parse_mode="Markdown"
+                )
+            else:
+                keyboard = [[InlineKeyboardButton("🔙 Menu", callback_data="back_menu")]]
+                reply_markup = InlineKeyboardMarkup(keyboard)
+                await query.edit_message_text(
+                    "📋 Aucune activation trouvée",
+                    reply_markup=reply_markup
+                )
+    
+    # ===== HISTORIQUE =====
+    elif query.data == "history":
+        history = get_history(10)
+        
+        if history:
+            message = "📜 *Historique (10 dernières)*\n\n"
+            for h in history:
+                phone = h.get("phone", "N/A")
+                sms = h.get("sms") or "Pas de SMS"  # Gérer None
+                cost = h.get("cost", 0)
+                status = h.get("status", "0")
+                
+                status_text = {
+                    "4": "✅ Complété",
+                    "6": "✅ Complété", 
+                    "8": "❌ Annulé"
+                }.get(status, f"Status {status}")
+                
+                # Tronquer le SMS de manière sécurisée
+                if sms and len(sms) > 40:
+                    sms_short = sms[:40] + "..."
+                else:
+                    sms_short = sms
+                
+                message += f"• {phone}\n  {status_text} - ${cost}\n  {sms_short}\n\n"
+            
+            keyboard = [
+                [InlineKeyboardButton("🔙 Activations", callback_data="activations")],
+                [InlineKeyboardButton("🏠 Menu", callback_data="back_menu")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await query.edit_message_text(
+                message,
+                reply_markup=reply_markup,
+                parse_mode="Markdown"
+            )
+        else:
+            keyboard = [[InlineKeyboardButton("🔙 Menu", callback_data="back_menu")]]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            await query.edit_message_text(
+                "📜 Aucun historique",
+                reply_markup=reply_markup
+            )
+    
     # ===== SERVICE CHOISI =====
     elif query.data.startswith("srv_"):
         service_code = query.data.replace("srv_", "")
         context.user_data["service"] = service_code
         
-        await query.edit_message_text("⏳ Recherche des pays disponibles...")
+        await query.edit_message_text("⏳ Recherche des pays...")
         
-        # Récupérer les pays pour ce service
         countries_data = get_countries_for_service(service_code)
         
         if not countries_data:
-            keyboard = [[InlineKeyboardButton("🔙 Nouvelle recherche", callback_data="order")]]
+            keyboard = [[InlineKeyboardButton("🔙 Retour", callback_data="order")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"❌ Aucun pays disponible pour `{service_code}`\n\n"
-                "Ce service n'est peut-être pas disponible actuellement.",
+                f"❌ Pas de pays pour `{service_code}`",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
             return
         
-        # Récupérer la liste complète des pays
+        # Récupérer infos pays
         all_countries = get_countries()
         country_dict = {c["id"]: c for c in all_countries}
         
-        # Trier par nombre de numéros disponibles
+        # Trier par disponibilité
         countries_data.sort(key=lambda x: x.get("count", 0), reverse=True)
-        
-        # Limiter à 15 pays
         countries_data = countries_data[:15]
         
         keyboard = []
@@ -314,50 +463,48 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             country_info = country_dict.get(country_id)
             
             if country_info:
-                country_name = country_info.get("eng", f"Country {country_id}")
+                name = country_info.get("eng", f"ID{country_id}")
                 count = c_data.get("count", 0)
                 price = c_data.get("price", 0)
                 
                 keyboard.append([
                     InlineKeyboardButton(
-                        f"{country_name} • {count} nums • ${price:.3f}",
+                        f"{name} • {count} nums • ${price:.2f}",
                         callback_data=f"ctry_{country_id}"
                     )
                 ])
         
         if not keyboard:
-            keyboard = [[InlineKeyboardButton("🔙 Nouvelle recherche", callback_data="order")]]
+            keyboard = [[InlineKeyboardButton("🔙 Retour", callback_data="order")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"❌ Impossible d'afficher les pays pour `{service_code}`",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
+                f"❌ Erreur affichage pays",
+                reply_markup=reply_markup
             )
             return
         
-        keyboard.append([InlineKeyboardButton("🔙 Nouvelle recherche", callback_data="order")])
+        keyboard.append([InlineKeyboardButton("🔙 Retour", callback_data="order")])
         reply_markup = InlineKeyboardMarkup(keyboard)
         
         await query.edit_message_text(
-            f"🌍 *Pays disponibles pour {service_code}*\n\n"
-            "Choisis un pays :",
+            f"🌍 *Pays pour {service_code}*\n\nChoisis :",
             reply_markup=reply_markup,
             parse_mode="Markdown"
         )
     
-    # ===== PAYS CHOISI - COMMANDER =====
+    # ===== PAYS CHOISI =====
     elif query.data.startswith("ctry_"):
         country_id = query.data.replace("ctry_", "")
         service = context.user_data.get("service")
         
         if not service:
-            await query.edit_message_text("❌ Erreur : service non trouvé. Recommence avec /start")
+            await query.edit_message_text("❌ Erreur. /start pour recommencer")
             return
         
-        await query.edit_message_text(f"⏳ Commande en cours pour *{service}*...", parse_mode="Markdown")
+        await query.edit_message_text(f"⏳ Commande...", parse_mode="Markdown")
         
         result = request_number(service, country_id)
-        print(f"Résultat commande: {result}")
+        print(f"Résultat: {result}")
         
         if "ACCESS_NUMBER" in result:
             parts = result.split(":")
@@ -373,11 +520,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.edit_message_text(
-                f"✅ *Numéro reçu pour {service} !*\n\n"
-                f"📞 Numéro : `{phone_number}`\n"
-                f"🆔 ID : `{activation_id}`\n\n"
-                f"📝 Utilise ce numéro pour t'inscrire\n"
-                f"Puis clique sur 'Vérifier SMS'",
+                f"✅ *Numéro reçu !*\n\n"
+                f"📞 `{phone_number}`\n"
+                f"🆔 `{activation_id}`\n\n"
+                f"Utilise-le puis clique 'Vérifier SMS'",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
@@ -385,26 +531,21 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             keyboard = [[InlineKeyboardButton("🔙 Réessayer", callback_data=f"srv_{service}")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"❌ *Plus de numéros disponibles*\n\n"
-                f"Essaye un autre pays ou réessaye plus tard.",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
+                "❌ Plus de numéros disponibles",
+                reply_markup=reply_markup
             )
         elif "NO_BALANCE" in result:
-            keyboard = [[InlineKeyboardButton("💰 Voir solde", callback_data="balance")]]
+            keyboard = [[InlineKeyboardButton("💰 Solde", callback_data="balance")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"❌ *Solde insuffisant*\n\n"
-                f"Recharge ton compte HeroSMS.",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
+                "❌ Solde insuffisant",
+                reply_markup=reply_markup
             )
         else:
             keyboard = [[InlineKeyboardButton("🔙 Menu", callback_data="back_menu")]]
             reply_markup = InlineKeyboardMarkup(keyboard)
             await query.edit_message_text(
-                f"❌ *Erreur lors de la commande*\n\n"
-                f"Détails : `{result}`",
+                f"❌ Erreur : `{result}`",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
@@ -412,7 +553,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== VERIFIER SMS =====
     elif query.data.startswith("check_"):
         activation_id = query.data.split("_")[1]
-        
         status = get_sms_code(activation_id)
         
         if "STATUS_OK" in status:
@@ -423,14 +563,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup = InlineKeyboardMarkup(keyboard)
             
             await query.edit_message_text(
-                f"✅ *Code reçu !*\n\n"
-                f"🔢 Code : `{code}`\n\n"
-                f"✔️ Activation terminée avec succès !",
+                f"✅ *Code reçu !*\n\n🔢 `{code}`",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
         elif "STATUS_WAIT_CODE" in status:
-            await query.answer("⏳ SMS pas encore reçu, réessaye dans quelques secondes", show_alert=True)
+            await query.answer("⏳ Pas encore reçu", show_alert=True)
         else:
             keyboard = [
                 [InlineKeyboardButton("🔄 Réessayer", callback_data=f"check_{activation_id}")],
@@ -453,21 +591,44 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         if "ACCESS_CANCEL" in result:
             await query.edit_message_text(
-                f"✅ *Activation annulée*\n\nArgent remboursé sur ton compte.",
-                reply_markup=reply_markup,
-                parse_mode="Markdown"
+                "✅ Annulé, argent remboursé",
+                reply_markup=reply_markup
             )
         else:
             await query.edit_message_text(
-                f"⚠️ Résultat : `{result}`",
+                f"⚠️ `{result}`",
                 reply_markup=reply_markup,
                 parse_mode="Markdown"
             )
 
-# ===== Lancement du bot =====
+# ===== Lancement =====
+
+def run_http_server():
+    """Serveur HTTP simple pour Render"""
+    from http.server import HTTPServer, BaseHTTPRequestHandler
+    
+    class HealthHandler(BaseHTTPRequestHandler):
+        def do_GET(self):
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain')
+            self.end_headers()
+            self.wfile.write(b'Bot HeroSMS is running!')
+        
+        def log_message(self, format, *args):
+            pass  # Désactiver les logs HTTP
+    
+    port = int(os.getenv('PORT', 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"🌐 Serveur HTTP démarré sur port {port}")
+    server.serve_forever()
 
 def main():
-    """Point d'entrée"""
+    # Lancer le serveur HTTP dans un thread séparé
+    from threading import Thread
+    http_thread = Thread(target=run_http_server, daemon=True)
+    http_thread.start()
+    
+    # Lancer le bot
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
