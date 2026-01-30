@@ -3,12 +3,32 @@ import requests
 from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
+from threading import Thread
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 load_dotenv()
 
 API_KEY = os.getenv("API_KEY")
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 BASE_URL = "https://hero-sms.com/stubs/handler_api.php"
+
+# ===== Serveur HTTP pour Render =====
+
+class SimpleHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/html')
+        self.end_headers()
+        self.wfile.write(b'<h1>HeroSMS Bot is running!</h1>')
+    
+    def log_message(self, format, *args):
+        return  # Silence les logs
+
+def start_http_server():
+    port = int(os.getenv('PORT', 10000))
+    server = HTTPServer(('0.0.0.0', port), SimpleHandler)
+    print(f"🌐 HTTP Server started on port {port}")
+    server.serve_forever()
 
 # ===== Fonctions HeroSMS =====
 
@@ -33,12 +53,7 @@ def get_all_services(lang="en"):
     return []
 
 def get_countries_for_service(service_code):
-    """
-    Récupère les pays disponibles pour un service
-    
-    L'API retourne un dictionnaire avec des clés numériques string:
-    {"0": {...}, "1": {...}, ...}
-    """
+    """Récupère les pays disponibles pour un service"""
     params = {
         "action": "getTopCountriesByService",
         "service": service_code,
@@ -53,15 +68,10 @@ def get_countries_for_service(service_code):
         
         data = response.json()
         
-        # L'API retourne un DICTIONNAIRE avec clés numériques
         if isinstance(data, dict):
-            # Convertir en liste
             countries_list = []
-            
-            # Parcourir toutes les clés (peu importe leur type)
             for key in data.keys():
                 value = data[key]
-                # Vérifier que c'est bien un objet pays
                 if isinstance(value, dict) and "country" in value:
                     countries_list.append(value)
             
@@ -72,13 +82,10 @@ def get_countries_for_service(service_code):
                 print(f"⚠️ Dictionnaire reçu mais pas de données pays valides")
                 return []
         
-        # Si c'est une liste (format alternatif)
         elif isinstance(data, list):
             print(f"✅ Format liste reçu avec {len(data)} éléments")
-            # Vérifier si c'est directement des objets pays
             if len(data) > 0 and isinstance(data[0], dict) and "country" in data[0]:
                 return data
-            # Sinon peut-être que c'est [{ "service": [...] }]
             elif len(data) > 0 and isinstance(data[0], dict):
                 for key, value in data[0].items():
                     if isinstance(value, list):
@@ -89,8 +96,6 @@ def get_countries_for_service(service_code):
         
     except Exception as e:
         print(f"❌ ERREUR: {e}")
-        import traceback
-        traceback.print_exc()
         return []
 
 def get_countries():
@@ -152,14 +157,11 @@ def get_active_activations():
         response = requests.get(BASE_URL, params=params, timeout=10)
         data = response.json()
         
-        # Vérifier que c'est bien un dict avec le bon format
         if isinstance(data, dict) and data.get("status") == "success":
             activations = data.get("activeActivations", [])
-            # S'assurer que c'est une liste
             if isinstance(activations, list):
                 return activations
         
-        # Si le format n'est pas bon, retourner liste vide
         return []
     except Exception as e:
         print(f"Erreur get_active_activations: {e}")
@@ -170,7 +172,7 @@ def get_history(limit=10):
     import time
     params = {
         "action": "getHistory",
-        "start": int(time.time()) - (7 * 24 * 3600),  # 7 derniers jours
+        "start": int(time.time()) - (7 * 24 * 3600),
         "end": int(time.time()),
         "offset": 0,
         "size": limit,
@@ -180,11 +182,9 @@ def get_history(limit=10):
         response = requests.get(BASE_URL, params=params, timeout=10)
         data = response.json()
         
-        # L'API retourne directement une liste
         if isinstance(data, list):
             return data
         
-        # Retourner liste vide si format incorrect
         return []
     except Exception as e:
         print(f"Erreur get_history: {e}")
@@ -218,7 +218,6 @@ async def search_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Impossible de récupérer la liste des services.")
         return
     
-    # Filtrer
     matching_services = [
         s for s in all_services 
         if query_text in s["name"].lower() or query_text in s["code"].lower()
@@ -232,7 +231,6 @@ async def search_service(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Limiter à 20
     matching_services = matching_services[:20]
     
     keyboard = [
@@ -257,7 +255,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     
-    # ===== SOLDE =====
     if query.data == "balance":
         balance = get_balance()
         keyboard = [[InlineKeyboardButton("🔙 Menu", callback_data="back_menu")]]
@@ -268,7 +265,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     
-    # ===== COMMANDER =====
     elif query.data == "order":
         await query.edit_message_text(
             "🔍 *Recherche de service*\n\n"
@@ -280,7 +276,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     
-    # ===== RETOUR MENU =====
     elif query.data == "back_menu":
         keyboard = [
             [InlineKeyboardButton("💰 Voir mon solde", callback_data="balance")],
@@ -294,12 +289,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     
-    # ===== MES ACTIVATIONS =====
     elif query.data == "activations":
-        # Récupérer les activations actives
         active = get_active_activations()
         
-        # Vérifier que c'est bien une liste
         if not isinstance(active, list):
             print(f"ERREUR: active n'est pas une liste, c'est un {type(active)}")
             active = []
@@ -308,7 +300,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = "📋 *Activations en cours*\n\n"
             keyboard = []
             
-            for act in active[:5]:  # Limiter à 5
+            for act in active[:5]:
                 phone = act.get("phoneNumber", "N/A")
                 service = act.get("serviceCode", "N/A")
                 status = act.get("activationStatus", "0")
@@ -325,7 +317,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 
                 message += f"• {service.upper()} - {phone}\n  {status_text}\n\n"
                 
-                # Ajouter un bouton pour vérifier
                 if status in ["0", "1", "3"]:
                     keyboard.append([
                         InlineKeyboardButton(
@@ -344,14 +335,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
         else:
-            # Pas d'activations actives, afficher l'historique
             history = get_history(5)
             
             if history:
                 message = "📜 *Historique (5 dernières)*\n\n"
                 for h in history:
                     phone = h.get("phone", "N/A")
-                    sms = h.get("sms") or "Pas de SMS"  # Gérer None
+                    sms = h.get("sms") or "Pas de SMS"
                     cost = h.get("cost", 0)
                     status = h.get("status", "0")
                     
@@ -361,7 +351,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         "8": "❌ Annulé"
                     }.get(status, f"Status {status}")
                     
-                    # Tronquer le SMS de manière sécurisée
                     if sms and len(sms) > 30:
                         sms_short = sms[:30] + "..."
                     else:
@@ -385,7 +374,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     reply_markup=reply_markup
                 )
     
-    # ===== HISTORIQUE =====
     elif query.data == "history":
         history = get_history(10)
         
@@ -393,7 +381,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             message = "📜 *Historique (10 dernières)*\n\n"
             for h in history:
                 phone = h.get("phone", "N/A")
-                sms = h.get("sms") or "Pas de SMS"  # Gérer None
+                sms = h.get("sms") or "Pas de SMS"
                 cost = h.get("cost", 0)
                 status = h.get("status", "0")
                 
@@ -403,7 +391,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "8": "❌ Annulé"
                 }.get(status, f"Status {status}")
                 
-                # Tronquer le SMS de manière sécurisée
                 if sms and len(sms) > 40:
                     sms_short = sms[:40] + "..."
                 else:
@@ -430,7 +417,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 reply_markup=reply_markup
             )
     
-    # ===== SERVICE CHOISI =====
     elif query.data.startswith("srv_"):
         service_code = query.data.replace("srv_", "")
         context.user_data["service"] = service_code
@@ -449,11 +435,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
         
-        # Récupérer infos pays
         all_countries = get_countries()
         country_dict = {c["id"]: c for c in all_countries}
         
-        # Trier par disponibilité
         countries_data.sort(key=lambda x: x.get("count", 0), reverse=True)
         countries_data = countries_data[:15]
         
@@ -492,7 +476,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
     
-    # ===== PAYS CHOISI =====
     elif query.data.startswith("ctry_"):
         country_id = query.data.replace("ctry_", "")
         service = context.user_data.get("service")
@@ -550,7 +533,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
     
-    # ===== VERIFIER SMS =====
     elif query.data.startswith("check_"):
         activation_id = query.data.split("_")[1]
         status = get_sms_code(activation_id)
@@ -581,7 +563,6 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
     
-    # ===== ANNULER =====
     elif query.data.startswith("cancel_"):
         activation_id = query.data.split("_")[1]
         result = cancel_activation(activation_id)
@@ -601,42 +582,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 parse_mode="Markdown"
             )
 
-# ===== Lancement =====
+# ===== Main =====
 
-def run_http_server():
-    """Serveur HTTP simple pour Render"""
-    from http.server import HTTPServer, BaseHTTPRequestHandler
-    
-    class HealthHandler(BaseHTTPRequestHandler):
-        def do_GET(self):
-            self.send_response(200)
-            self.send_header('Content-type', 'text/plain')
-            self.end_headers()
-            self.wfile.write(b'Bot HeroSMS is running!')
-        
-        def log_message(self, format, *args):
-            pass  # Désactiver les logs HTTP
-    
-    port = int(os.getenv('PORT', 10000))
-    server = HTTPServer(('0.0.0.0', port), HealthHandler)
-    print(f"🌐 Serveur HTTP démarré sur port {port}")
-    server.serve_forever()
-
-def main():
-    # Lancer le serveur HTTP dans un thread séparé
-    from threading import Thread
-    http_thread = Thread(target=run_http_server, daemon=True)
+if __name__ == "__main__":
+    # Démarrer le serveur HTTP en arrière-plan
+    http_thread = Thread(target=start_http_server, daemon=True)
     http_thread.start()
     
-    # Lancer le bot
+    # Démarrer le bot
     app = Application.builder().token(BOT_TOKEN).build()
     
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_service))
     
-    print("🤖 Bot HeroSMS démarré !")
+    print("🤖 Bot Telegram démarré !")
     app.run_polling()
-
-if __name__ == "__main__":
-    main()
